@@ -1709,6 +1709,8 @@ html:-webkit-full-screen #playerDialog.player-fullscreen {
 
 .player-stage {
   position: relative;
+  /* Reserve room for both control groups before video metadata arrives. */
+  min-height: 420px;
   line-height: 0;
   overflow: hidden;
   background: #000;
@@ -2070,6 +2072,10 @@ html:-webkit-full-screen #playerDialog.player-fullscreen {
 }
 
 @media (max-width: 560px) {
+  .player-stage {
+    min-height: 320px;
+  }
+
   .video-controls {
     grid-template-columns: minmax(70px, 1fr) 48px 48px;
     gap: 4px;

@@ -251,9 +251,13 @@ export function releasePills(show) {
     || dateFromAllAnimeDate(show.lastEpisodeDate);
   const startYear = startDate?.getFullYear() || Number(show.season?.year) || null;
   const endYear = endDate?.getFullYear() || null;
-  const finished = status.includes('finished') || status.includes('completed');
+  const finished = /\bfinished\b|\bcompleted\b/.test(status);
   const upcoming = status.includes('not yet') || status.includes('upcoming');
-  const releasing = status.includes('releasing') || status.includes('ongoing');
+  const releasing = !finished && !upcoming && (
+    status.includes('releasing')
+    || status.includes('ongoing')
+    || status.includes('currently airing')
+  );
   const hiatus = status.includes('hiatus');
   const cancelled = status.includes('cancel') || status.includes('discontinu');
 
@@ -312,4 +316,34 @@ export function busyLabel(action) {
     episodes: 'Fetching...',
     details: 'Fetching...',
   }[action] || 'Working...';
+}
+
+export function timestampMs(value) {
+  if (value instanceof Date) {
+    const ms = value.getTime();
+    return Number.isFinite(ms) ? ms : 0;
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value > 0 && value < 1e11 ? value * 1000 : value;
+  }
+  const text = String(value || '').trim().replace(/^(\d{4}-\d{2}-\d{2}) (\d{2}:)/, '$1T$2');
+  const parsed = Date.parse(text);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+export function latestActivityMs(item, extraTimes = []) {
+  const activity = Math.max(
+    timestampMs(item?.lastActivityAt),
+    ...extraTimes.map(timestampMs),
+  );
+  return activity > 0 ? activity : timestampMs(item?.updatedAt);
+}
+
+export function compareByName(a, b) {
+  return String(a?.name || a?.title || a?.id || '').localeCompare(String(b?.name || b?.title || b?.id || ''));
+}
+
+export function compareNewestActivity(a, b, extraTimesFor) {
+  const diff = latestActivityMs(b, extraTimesFor(b)) - latestActivityMs(a, extraTimesFor(a));
+  return diff || compareByName(a, b);
 }

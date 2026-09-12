@@ -11,6 +11,8 @@ import {
   matchesLibraryQuery,
   presentAnimeCard,
   progressRatio,
+  compareByName,
+  compareNewestActivity,
 } from './util.js';
 
 function isArchived(show) {
@@ -42,15 +44,22 @@ function filterLibrary(shows) {
   }).filter((show) => matchesLibraryQuery(show, state.libraryQuery));
 }
 
+function positionTimesForShow(showId) {
+  return Object.values(state.positions || {})
+    .filter((entry) => entry.showId === showId)
+    .map((entry) => entry.updatedAt);
+}
+
 function sortShows(sort) {
   return (a, b) => {
-    if (sort === 'az') return String(a.name || a.title).localeCompare(String(b.name || b.title));
-    if (sort === 'recent') return String(b.updatedAt || '').localeCompare(String(a.updatedAt || ''));
+    if (sort === 'az') return compareByName(a, b);
+    if (sort === 'recent') return compareNewestActivity(a, b, (item) => positionTimesForShow(item.id));
     if (sort === 'progress') {
       const diff = progressRatio(b) - progressRatio(a);
-      return diff || String(a.name || a.title).localeCompare(String(b.name || b.title));
+      return diff || compareByName(a, b);
     }
-    return (b.newCount - a.newCount) || String(a.name || a.title).localeCompare(String(b.name || b.title));
+    const diff = (Number(b.newCount) || 0) - (Number(a.newCount) || 0);
+    return diff || compareByName(a, b);
   };
 }
 
@@ -128,7 +137,7 @@ export async function loadLibrary(refresh = false) {
   els.refreshBtn.disabled = true;
   els.refreshBtn.textContent = '…';
   try {
-    const data = await api(`/api/library${refresh ? '?refresh=1' : ''}`);
+    const data = await api(`/api/library${refresh ? '?refresh=1' : ''}`, { background: !refresh });
     state.library = data.shows || [];
     refreshAnimeCards();
     if (refresh) toast('Library updated');
@@ -152,6 +161,25 @@ export async function removeShow(show) {
   await api(`/api/shows/${encodeURIComponent(show.id)}`, { method: 'DELETE' });
   toast('Removed from library');
   await loadLibrary(false);
+}
+
+export async function manuallyMatchHiAnime(show) {
+  const query = window.prompt('Search HiAnime for this title:', show.name || show.title || '');
+  if (!query?.trim()) return;
+  const data = await api(`/api/hianime/search?q=${encodeURIComponent(query.trim())}`);
+  const results = data.results || [];
+  if (!results.length) throw new Error('No HiAnime matches found');
+  const choices = results.slice(0, 10).map((item, index) => `${index + 1}. ${item.name || item.title} (${item.id})`).join('\n');
+  const answer = window.prompt(`Choose the correct result by number:\n\n${choices}`);
+  const selected = results[Number(answer) - 1];
+  if (!selected) return;
+  const updated = await api(`/api/shows/${encodeURIComponent(show.id)}/hianime`, {
+    method: 'POST',
+    body: JSON.stringify({ hianimeId: selected.id, query: query.trim() }),
+  });
+  syncAnimeShow(updated.show || {});
+  renderLibrary();
+  toast('HiAnime match saved');
 }
 
 export async function setShowArchived(show, archived) {

@@ -11,6 +11,7 @@ module.exports = [
       'playwright-report/**',
       'test-results/**',
       'tests/fixtures/**',
+      'public/vendor/**',
     ],
   },
   js.configs.recommended,

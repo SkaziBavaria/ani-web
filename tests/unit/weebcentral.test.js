@@ -64,6 +64,19 @@ test('parseChapterImages keeps reader images and removes page furniture', () => 
   ]);
 });
 
+test('chapter parsing scopes labels to their link and rejects season-local numbering', () => {
+  assert.deepEqual(parseChapterRows('<a href="/chapters/WRONG">Next</a><a href="https://weebcentral.com/chapters/RIGHT"><span>Chapter 350</span></a><a href="/chapters/SEASON"><span>Season 2 Chapter 10</span></a>'), [{ chapterId: 'RIGHT', number: '350' }]);
+});
+
+test('duplicate chapter numbers fail safely without requesting images', async () => {
+  setAnidbTextFetcherForTests(async (url) => {
+    if (url.includes('/search/simple')) return '<a href="https://weebcentral.com/series/ABC/Demo"><img alt="Demo cover"></a>';
+    assert.ok(url.includes('/full-chapter-list'));
+    return '<a href="/chapters/ONE"><span>Chapter 1</span></a><a href="/chapters/TWO"><span>Chapter 1</span></a>';
+  });
+  await assert.rejects(getChapterPagesByTitle(['Demo'], '1'), /Ambiguous Weeb Central chapter/);
+});
+
 test('chapter resolution caches title and chapter-list requests', async () => {
   const calls = [];
   setAnidbTextFetcherForTests(async (url) => {

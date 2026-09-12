@@ -55,7 +55,7 @@ export async function openEpisodes(show) {
   els.dialog.showModal();
 
   const mode = show.mode || state.settings.mode;
-  const data = await api(`/api/shows/${encodeURIComponent(show.id)}/episodes?mode=${encodeURIComponent(mode)}`);
+  const data = await api(`/api/shows/${encodeURIComponent(show.id)}/episodes?mode=${encodeURIComponent(mode)}&provider=${encodeURIComponent(show.provider || '')}`);
   show.episodes = data.episodes || [];
   show.latestEpisode = data.latestEpisode;
   show.episodeTitles = data.episodeTitles || {};

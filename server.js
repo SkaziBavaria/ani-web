@@ -7,6 +7,7 @@ const os = require('os');
 const { HOST, PORT, ACCESS_TOKEN } = require('./lib/config');
 const { isOpenBind } = require('./lib/bind-security');
 const { ensureDataDir, startBackupSchedule, closeState } = require('./lib/state');
+const { migrateLibraries, waitForLibraryMigrations } = require('./lib/library-migrations');
 const { handleApi } = require('./lib/routes');
 const { sendError } = require('./lib/http');
 const { serveStatic } = require('./lib/static');
@@ -18,27 +19,10 @@ ensureDataDir();
 startBackupSchedule();
 
 // Best-effort provider ID migrations (non-blocking).
-setTimeout(() => {
-  try {
-    const { readState, saveState } = require('./lib/state');
-    const { migrateLibraryToAnidb } = require('./lib/anidb-migrate');
-    const { migrateLibraryToComicK } = require('./lib/comick-migrate');
-    const state = readState();
-    migrateLibraryToAnidb(state, { limit: 25 })
-      .then(async (animeReport) => [animeReport, await migrateLibraryToComicK(state, { limit: 25 })])
-      .then(([animeReport, mangaReport]) => {
-        if (animeReport.migrated || animeReport.needsRematch || mangaReport.migrated || mangaReport.needsRematch) {
-          saveState(state);
-          console.log(`[migration] anime=${animeReport.migrated}/${animeReport.needsRematch} manga=${mangaReport.migrated}/${mangaReport.needsRematch}`);
-        }
-      })
-      .catch((error) => {
-        console.warn('[anidb] library migration skipped:', error.message || error);
-      });
-  } catch (error) {
-    console.warn('[anidb] library migration unavailable:', error.message || error);
-  }
-}, 2_500).unref();
+const migrationTimer = setTimeout(() => {
+  migrateLibraries().catch(() => console.warn('[migration] Library migration failed; retry after restart'));
+}, 2_500);
+migrationTimer.unref();
 
 process.on('unhandledRejection', (reason) => {
   console.error('Unhandled promise rejection:', reason);
@@ -100,6 +84,7 @@ async function shutdown(signal) {
   shuttingDown = true;
   console.log(`Received ${signal}; shutting down`);
   clearTimeout(initialSyncTimer);
+  clearTimeout(migrationTimer);
   clearInterval(syncTimer);
 
   const serverClosed = new Promise((resolve) => server.close(resolve));
@@ -110,6 +95,7 @@ async function shutdown(signal) {
     serverClosed,
     shutdownJobs(),
     waitForActiveSync(),
+    waitForLibraryMigrations(),
   ]);
   clearTimeout(connectionDeadline);
   await closeState();

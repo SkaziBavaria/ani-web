@@ -117,6 +117,22 @@ test('archive preference survives newer show metadata sync', () => {
   assert.equal(show.archived, true);
 });
 
+test('lastActivityAt survives newer show metadata sync', () => {
+  updateShowWatched('legacy', (watched) => watched.add('4'));
+  const activity = readState().shows.legacy.lastActivityAt;
+  assert.ok(activity);
+  mergeSyncBundles([{
+    version: 1,
+    deviceId: 'phone',
+    records: [
+      { kind: 'show', key: 'legacy', value: { id: 'legacy', name: 'Renamed' }, updatedAt: '2099-03-01T00:00:00.000Z', deviceId: 'phone' },
+    ],
+  }]);
+  const show = readState().shows.legacy;
+  assert.equal(show.name, 'Renamed');
+  assert.equal(show.lastActivityAt, activity);
+});
+
 test('a stale metadata save cannot overwrite an atomic watched update', () => {
   const staleRefresh = readState();
   updateShowWatched('legacy', (watched) => watched.add('9'));
@@ -233,7 +249,7 @@ test('release watches sync across devices for anime and manga', () => {
       {
         kind: 'release_watch',
         key: 'aw-remote',
-        value: { id: 'aw-remote', query: 'Remote Anime', mode: 'dub', status: 'found', matchedShow: { id: 's9', name: 'Remote Show' } },
+        value: { id: 'aw-remote', query: 'Remote Anime', mode: 'dub', status: 'found', matchedShow: { id: 's9', name: 'Remote Show', provider: 'hianime', hianimeId: 'remote-9' } },
         updatedAt: '2099-05-02T00:00:00.000Z',
         deviceId: 'phone',
       },
@@ -258,6 +274,8 @@ test('release watches sync across devices for anime and manga', () => {
   assert.equal(next.releaseWatches.aw1, undefined);
   assert.equal(next.releaseWatches['aw-remote'].query, 'Remote Anime');
   assert.equal(next.releaseWatches['aw-remote'].matchedShow.name, 'Remote Show');
+  assert.equal(next.releaseWatches['aw-remote'].matchedShow.provider, 'hianime');
+  assert.equal(next.releaseWatches['aw-remote'].matchedShow.hianimeId, 'remote-9');
   assert.equal(next.mangaReleaseWatches['mw-remote'].query, 'Remote Manga');
   assert.equal(next.mangaReleaseWatches.mw2.query, 'Upcoming Manga');
 });

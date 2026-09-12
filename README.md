@@ -141,6 +141,28 @@ Docker also supports:
 
 ## Development
 
+Anime provider selection and model normalization live in `lib/anime-provider.js`.
+Routes, library refresh, and download scheduling use this boundary for details
+and playback. Adapters own upstream requests and parsers; they do not write
+library state. Keep the stable library `id` separate from upstream IDs such as
+`hianimeId`, and normalize episode rows to strings before returning API data.
+Adding an adapter requires explicit identity mapping and contract tests for
+metadata, playback, and wrong-identity rejection.
+
+`lib/anime-recommendations.js` ranks candidates independently of providers.
+`lib/web-fetch.js` owns shared HTTP/curl transport; `lib/anidb-fetch.js` remains
+a compatibility entry point. Provider-specific failures must keep their identity
+when they reach the API and browser status banner.
+
+Manga catalog identity stays in ComicK. The ordered page resolver list in
+`lib/comick.js` is independent of catalog IDs; each resolver must verify its
+title before returning pages. Legacy modules remain for persisted compatibility
+and tests and must not be mistaken for active providers.
+
+Library migrations run through `lib/library-migrations.js`, with a backup before
+changes. Reading the library does not trigger upstream migration requests.
+Unmatched anime mappings have a retry cooldown and remain manually matchable.
+
 Install locked dependencies and run lint plus unit tests:
 
 ```sh

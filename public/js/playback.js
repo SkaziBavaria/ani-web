@@ -9,6 +9,11 @@ import {
   presentAnimeCard,
 } from './util.js';
 import { loadSkipTimes, skipShowTitle } from './aniskip.js';
+import {
+  hlsPlaybackStrategy,
+  loadHlsConstructor,
+  nativeHlsSupported,
+} from './hls-player.js';
 
 let currentContext = null;
 let currentShow = null;
@@ -19,6 +24,8 @@ let finishedMarked = false;
 let playerSeeking = false;
 let detachSkipTimes = null;
 let playbackGeneration = 0;
+let activeHls = null;
+let awaitingHls = false;
 const controlsState = {
   hover: false,
   hideTimer: 0,
@@ -475,11 +482,31 @@ function toggleMute() {
 
 function videoErrorMessage(video) {
   const code = Number(video?.error?.code) || 0;
+  const message = String(video?.error?.message || '');
   if (code === 1) return 'Playback was aborted';
   if (code === 2) return 'Network error while loading the stream';
   if (code === 3) return 'This device could not decode the video';
-  if (code === 4) return 'No playable stream format for this device';
-  return video?.error?.message || 'Could not play this stream';
+  if (code === 4 || /no supported source/i.test(message)) return 'No playable stream format for this device';
+  return message || 'Could not play this stream';
+}
+
+function detachHls() {
+  awaitingHls = false;
+  if (!activeHls) return;
+  try { activeHls.destroy(); } catch {}
+  activeHls = null;
+}
+
+function resetVideoElement() {
+  detachHls();
+  const video = els.playerVideo;
+  if (!video) return;
+  video.onerror = null;
+  video.pause();
+  video.removeAttribute('src');
+  video.srcObject = null;
+  // Do not call load() on an empty element: Chromium fires
+  // MEDIA_ERR_SRC_NOT_SUPPORTED ("no supported source was found").
 }
 
 function startVideoPlayback() {
@@ -494,6 +521,7 @@ function startVideoPlayback() {
       toast('Tap play to start');
       return;
     }
+    if (awaitingHls || activeHls) return;
     toast(error?.message || 'Could not start playback');
   });
 }
@@ -502,6 +530,65 @@ function closeBlockingDialogs() {
   // Nested modal dialogs are unreliable across browsers; keep a single player dialog.
   if (els.dialog?.open) els.dialog.close();
   if (els.detailsDialog?.open) els.detailsDialog.close();
+}
+
+function attachProgressivePlayback(video, playback, failPlayback) {
+  const direct = canPlayDirect(playback);
+  video.src = playbackStreamUrl(playback);
+  video.load();
+  if (direct) {
+    video.onerror = () => {
+      video.onerror = failPlayback;
+      video.src = proxyStreamUrl(playback);
+      video.load();
+      startVideoPlayback();
+    };
+  } else {
+    video.onerror = failPlayback;
+  }
+  startVideoPlayback();
+}
+
+async function attachHlsPlayback(video, playback, { generation, failPlayback }) {
+  const url = playbackStreamUrl(playback);
+  let HlsCtor;
+  try { HlsCtor = await loadHlsConstructor(); } catch (error) {
+    if (generation !== playbackGeneration) return;
+    awaitingHls = false;
+    toast(error.message || 'Could not load HLS player');
+    return;
+  }
+  if (generation !== playbackGeneration) return;
+  const strategy = hlsPlaybackStrategy({
+    url,
+    sourceUrl: playback.url,
+    canPlayNativeHls: nativeHlsSupported(video),
+    mseHlsSupported: Boolean(HlsCtor?.isSupported?.()),
+  });
+  if (strategy === 'native' || strategy === 'progressive') {
+    awaitingHls = false;
+    attachProgressivePlayback(video, playback, failPlayback);
+    return;
+  }
+  if (strategy !== 'mse' || !HlsCtor) {
+    awaitingHls = false;
+    toast('No playable stream format for this device');
+    return;
+  }
+  const hls = new HlsCtor({ enableWorker: true });
+  activeHls = hls;
+  hls.on(HlsCtor.Events.MANIFEST_PARSED, () => {
+    if (generation !== playbackGeneration) return;
+    startVideoPlayback();
+  });
+  hls.on(HlsCtor.Events.ERROR, (_event, data) => {
+    if (generation !== playbackGeneration || !data?.fatal) return;
+    detachHls();
+    setVideoControlsVisible(true);
+    toast(videoErrorMessage(video));
+  });
+  hls.loadSource(url);
+  hls.attachMedia(video);
 }
 
 function openBrowserPlayback(show, episode, playback) {
@@ -516,43 +603,42 @@ function openBrowserPlayback(show, episode, playback) {
   updatePlayerNav();
   updateVideoControls();
   els.playerTitle.textContent = playback.title || `${show.name || show.title || 'Video'} ep ${episode}`;
-  els.playerVideo.pause();
-  els.playerVideo.removeAttribute('src');
-  els.playerVideo.load();
+  resetVideoElement();
   updateVideoControls();
 
   const resume = positionFor(show.id, episode)?.position || 0;
-  const direct = canPlayDirect(playback);
-  els.playerVideo.onerror = null;
+  const video = els.playerVideo;
+  video.onerror = null;
   attachResume(resume);
   attachSkipTimes(show, episode);
 
   const failPlayback = () => {
     if (generation !== playbackGeneration) return;
-    els.playerVideo.onerror = null;
+    video.onerror = null;
     setVideoControlsVisible(true);
-    toast(videoErrorMessage(els.playerVideo));
+    toast(videoErrorMessage(video));
   };
 
-  els.playerVideo.src = playbackStreamUrl(playback);
-  els.playerVideo.load();
-  if (direct) {
-    els.playerVideo.onerror = () => {
+  const url = playbackStreamUrl(playback);
+  const strategy = hlsPlaybackStrategy({
+    url,
+    sourceUrl: playback.url,
+    canPlayNativeHls: nativeHlsSupported(video),
+    mseHlsSupported: true,
+  });
+  if (strategy === 'mse') {
+    awaitingHls = true;
+    attachHlsPlayback(video, playback, { generation, failPlayback }).catch((error) => {
       if (generation !== playbackGeneration) return;
-      els.playerVideo.onerror = failPlayback;
-      attachResume(resume);
-      els.playerVideo.src = proxyStreamUrl(playback);
-      els.playerVideo.load();
-      startVideoPlayback();
-    };
+      toast(error.message || 'Could not play this stream');
+    });
   } else {
-    els.playerVideo.onerror = failPlayback;
+    attachProgressivePlayback(video, playback, failPlayback);
   }
 
   closeBlockingDialogs();
   if (!els.playerDialog.open) els.playerDialog.showModal();
   focusPlayerStage();
-  startVideoPlayback();
   updateVideoControls();
   showVideoControlsTemporarily();
 }
@@ -608,7 +694,7 @@ export async function resolveLocalPlayback(show, episode) {
 
 export function bindPlayerDialog() {
   els.closePlayerBtn.addEventListener('click', () => {
-    els.playerVideo.pause();
+    resetVideoElement();
     els.playerDialog.close();
   });
   els.playerDialog.addEventListener('close', () => {
@@ -616,9 +702,7 @@ export function bindPlayerDialog() {
     if (shouldMarkFinishedOnClose()) markEpisodeFinished();
     else persistProgress();
     refreshAnimeCards();
-    els.playerVideo.pause();
-    els.playerVideo.removeAttribute('src');
-    els.playerVideo.load();
+    resetVideoElement();
     hideSkipButton();
     detachSkipTimes?.();
     detachSkipTimes = null;

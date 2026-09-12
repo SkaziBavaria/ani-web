@@ -8,7 +8,7 @@ import {
 } from './progress.js';
 import { state } from './state.js';
 import { writeUiPrefs } from './ui-prefs.js';
-import { escapeHtml, hasExactTitleMatch, matchesLibraryQuery, presentMangaCard, stripDescription } from './util.js';
+import { escapeHtml, hasExactTitleMatch, matchesLibraryQuery, presentMangaCard, stripDescription, compareByName, compareNewestActivity } from './util.js';
 
 function compareChapters(a, b) {
   return Number(a) - Number(b) || String(a).localeCompare(String(b));
@@ -245,15 +245,22 @@ function mangaProgressRatio(manga) {
   return Math.min(1, last / latest);
 }
 
+function mangaPositionTimes(mangaId) {
+  return Object.values(state.mangaPositions || {})
+    .filter((entry) => entry.mangaId === mangaId)
+    .map((entry) => entry.updatedAt);
+}
+
 function sortMangaLibrary(sort) {
   return (a, b) => {
-    if (sort === 'az') return String(a.name || a.title).localeCompare(String(b.name || b.title));
-    if (sort === 'recent') return String(b.updatedAt || '').localeCompare(String(a.updatedAt || ''));
+    if (sort === 'az') return compareByName(a, b);
+    if (sort === 'recent') return compareNewestActivity(a, b, (item) => mangaPositionTimes(item.id));
     if (sort === 'progress') {
       const diff = mangaProgressRatio(b) - mangaProgressRatio(a);
-      return diff || String(a.name || a.title).localeCompare(String(b.name || b.title));
+      return diff || compareByName(a, b);
     }
-    return (Number(b.newCount) - Number(a.newCount)) || String(a.name || a.title).localeCompare(String(b.name || b.title));
+    const diff = (Number(b.newCount) || 0) - (Number(a.newCount) || 0);
+    return diff || compareByName(a, b);
   };
 }
 
@@ -331,7 +338,7 @@ export function syncManga(partial) {
 export async function loadMangaLibrary(refresh = false) {
   if (state.mediaMode === 'manga') els.refreshBtn.disabled = true;
   try {
-    const data = await api(`/api/manga/library${refresh ? '?refresh=1' : ''}`);
+    const data = await api(`/api/manga/library${refresh ? '?refresh=1' : ''}`, { background: !refresh });
     state.mangaLibrary = data.mangas || [];
     refreshMangaCards();
     if (refresh) toast('Manga library updated');
@@ -663,7 +670,7 @@ async function cancelMangaDownloadRange() {
 async function openMangaChapters(manga, requestedChapter = '') {
   // Continue/read with a known chapter: open pages first so we don't burn the
   // upstream rate budget on a redundant details+relations fetch.
-  if (requestedChapter && Array.isArray(manga.chapters) && manga.chapters.length) {
+  if (requestedChapter && requestedChapter !== 'auto' && Array.isArray(manga.chapters) && manga.chapters.length) {
     state.activeManga = presentMangaCard(manga);
     await openMangaReader(manga, requestedChapter);
     return;
@@ -692,7 +699,9 @@ async function openMangaChapters(manga, requestedChapter = '') {
   renderChapterGrid(details);
   els.mangaDialog.showModal();
   await loadMangaDownloadJobs(details);
-  const resolvedChapter = requestedChapter === 'auto' ? nextChapter(details) : requestedChapter;
+  const resolvedChapter = requestedChapter === 'auto'
+    ? (nextChapter(details) || [...(details.chapters || [])].map(String).sort(compareChapters).at(-1) || '')
+    : requestedChapter;
   if (resolvedChapter) {
     els.mangaDialog.close();
     await openMangaReader(details, resolvedChapter);

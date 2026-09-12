@@ -1,13 +1,35 @@
 import { els } from './dom.js';
+import { state } from './state.js';
+
+function providerForMessage(value) {
+  const message = String(value || '');
+  if (/\bAniDB\b/i.test(message)) return 'retired';
+  if (/\bHiAnime\b/i.test(message)) return 'anime';
+  if (/\b(?:Manga provider|ComicK|MangaDex|WeebCentral|MangaPill|MangaTown)\b/i.test(message)) return 'manga';
+  return null;
+}
+
+function isRelevantMessage(value) {
+  const providerMode = providerForMessage(value);
+  return !providerMode || providerMode === state.mediaMode;
+}
 
 export async function api(path, options = {}) {
-  const res = await fetch(path, {
-    ...options,
-    headers: {
-      'content-type': 'application/json',
-      ...(options.headers || {}),
-    },
-  });
+  const { background = false, ...fetchOptions } = options;
+  let res;
+  try {
+    res = await fetch(path, {
+      ...fetchOptions,
+      headers: {
+        'content-type': 'application/json',
+        ...(options.headers || {}),
+      },
+    });
+  } catch (error) {
+    error.background = background;
+    toastError(error);
+    throw error;
+  }
   const json = await res.json().catch(() => ({}));
   if (res.headers.get('x-animanga-cache') === 'offline' && json && typeof json === 'object') {
     json.offline = true;
@@ -17,9 +39,32 @@ export async function api(path, options = {}) {
     const detail = typeof json.details === 'string'
       ? json.details.replace(new RegExp('\\u001b\\[[0-9;]*m', 'g'), '').trim().split('\n').filter(Boolean).slice(-3).join(' · ')
       : '';
-    throw new Error(detail ? `${json.error}: ${detail}` : json.error || `HTTP ${res.status}`);
+    const error = new Error(publicErrorMessage(
+      detail ? `${json.error}: ${detail}` : json.error || `HTTP ${res.status}`,
+    ));
+    Object.assign(error, { background, mediaMode: json.mediaMode, provider: json.provider, upstreamStatus: json.upstreamStatus, code: json.code });
+    if (json.provider && json.provider !== 'anidb') window.dispatchEvent(new CustomEvent('animanga:provider-failure', { detail: json }));
+    toastError(error);
+    throw error;
   }
   return json;
+}
+
+export function publicErrorMessage(value) {
+  const message = String(value || 'Something went wrong');
+  const isAniDbPlayback = /AniManga could not fetch a playable link|AniDB/i.test(message);
+  const leaksCurlInternals = /upstream curl failed|curl:\s*\(\d+\)|curl_(?:chrome|firefox)|curl-impersonate/i.test(message);
+  if (isAniDbPlayback && leaksCurlInternals) {
+    const status = message.match(/(?:HTTP|error:)\s*(\d{3})/i)?.[1];
+    return status ? `AniDB unavailable (HTTP ${status})` : 'AniDB unavailable';
+  }
+  return message;
+}
+
+const ERROR_TOAST_MS = 30_000;
+
+function looksLikeErrorToast(text) {
+  return /failed to load|no supported source|no playable stream|could not play|could not load|could not start playback|has no \w* ?sources|no \w+ \w+ source found|this device could not decode|network error while loading the stream|playback was aborted/i.test(String(text || ''));
 }
 
 function raiseToast() {
@@ -31,9 +76,23 @@ function raiseToast() {
 }
 
 export function toast(message, options = {}) {
+  const text = publicErrorMessage(message);
+  const known = toast.lastFailure;
+  const failure = known?.message === text && Date.now() < known.until ? known : null;
+  if (failure?.background || (failure?.mediaMode && failure.mediaMode !== state.mediaMode)) return;
+  if (!failure?.mediaMode && !isRelevantMessage(text)) return;
   clearTimeout(toast.timer);
   clearTimeout(toast.hideTimer);
-  els.toast.replaceChildren(document.createTextNode(message));
+  toast.mediaMode = failure?.mediaMode || providerForMessage(text);
+  const inheritedError = text === toast.lastErrorMessage && Date.now() < (toast.lastErrorUntil || 0);
+  const isError = options.error === true || inheritedError || looksLikeErrorToast(text);
+  els.toast.classList.toggle('error', isError);
+  els.toast.setAttribute('role', isError ? 'alert' : 'status');
+  els.toast.setAttribute('aria-live', isError ? 'assertive' : 'polite');
+  const content = document.createElement('span');
+  content.className = 'toast-message';
+  content.textContent = text;
+  els.toast.replaceChildren(content);
   if (options.actionLabel && typeof options.onAction === 'function') {
     const button = document.createElement('button');
     button.type = 'button';
@@ -45,6 +104,18 @@ export function toast(message, options = {}) {
     }, { once: true });
     els.toast.append(button);
   }
+  if (isError) {
+    toast.lastErrorMessage = text;
+    toast.lastErrorUntil = Date.now() + ERROR_TOAST_MS;
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'toast-close';
+    close.textContent = '×';
+    close.title = 'Dismiss error';
+    close.setAttribute('aria-label', 'Dismiss error');
+    close.addEventListener('click', () => hideToast(), { once: true });
+    els.toast.append(close);
+  }
   raiseToast();
   els.toast.classList.add('show');
   // Reinsert the toast after any dialog opened in the same task so it stays
@@ -52,14 +123,32 @@ export function toast(message, options = {}) {
   queueMicrotask(() => {
     if (els.toast.classList.contains('show')) raiseToast();
   });
-  toast.timer = setTimeout(() => {
-    els.toast.classList.remove('show');
-    toast.hideTimer = setTimeout(() => {
-      try {
-        if (els.toast.matches(':popover-open')) els.toast.hidePopover();
-      } catch {}
-    }, 200);
-  }, options.duration || (options.actionLabel ? 6000 : 2600));
+  toast.timer = setTimeout(hideToast, options.duration || (isError ? ERROR_TOAST_MS : options.actionLabel ? 6000 : 2600));
+}
+
+function hideToast() {
+  clearTimeout(toast.timer);
+  els.toast.classList.remove('show');
+  toast.hideTimer = setTimeout(() => {
+    try {
+      if (els.toast.matches(':popover-open')) els.toast.hidePopover();
+    } catch {}
+  }, 200);
+}
+
+window.addEventListener('animanga:media-mode', () => {
+  if (toast.mediaMode) {
+    if (toast.mediaMode !== state.mediaMode) hideToast();
+    return;
+  }
+  const message = els.toast.querySelector('.toast-message')?.textContent || '';
+  if (message && !isRelevantMessage(message)) hideToast();
+});
+
+export function toastError(error) {
+  const message = publicErrorMessage(error?.message || error || 'Something went wrong');
+  toast.lastFailure = { message, background: error?.background, mediaMode: error?.mediaMode, until: Date.now() + ERROR_TOAST_MS };
+  toast(message, { error: true });
 }
 
 export function reportBackgroundError(context, error) {
@@ -87,7 +176,7 @@ export async function runAction(button, label, task) {
   try {
     return await withBusy(button, label, task);
   } catch (err) {
-    toast(err.message);
+    toastError(err);
     return undefined;
   }
 }

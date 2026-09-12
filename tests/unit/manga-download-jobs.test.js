@@ -40,7 +40,9 @@ test('queues and cancels a manga chapter batch without starting new downloads', 
 
   const cancelling = cancelMangaDownloadJob('m1', created.id);
   assert.equal(cancelling.status, 'cancelling');
-  await new Promise((resolve) => setTimeout(resolve, 20));
+  // The queue is scheduled with setImmediate; a timer can fire before that
+  // phase on a busy runner, regardless of how many milliseconds have elapsed.
+  await new Promise((resolve) => setImmediate(resolve));
 
   const [job] = listMangaDownloadJobs('m1');
   assert.equal(job.status, 'cancelled');

@@ -81,7 +81,7 @@ export async function watchMangaRelease(query) {
 }
 
 export async function checkMangaReleaseWatches({ silent = false } = {}) {
-  const data = await api('/api/manga/release-watches/check', { method: 'POST' });
+  const data = await api('/api/manga/release-watches/check', { method: 'POST', background: silent });
   state.mangaReleaseWatches = data.watches || [];
   if (!silent && (data.found || []).length) state.mangaReleaseWatchesOpen = true;
   renderMangaReleaseWatches();

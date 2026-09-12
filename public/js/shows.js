@@ -30,10 +30,16 @@ function playButtonLabel(label, episode) {
 }
 
 function progressLabel(show, source) {
-  const latest = show.latestEpisode || show.episodeCount || '';
+  const mode = show.mode || state.settings?.mode || 'sub';
+  const byMode = Number(show.episodeCounts?.[mode] || 0);
+  const latest = byMode || show.latestEpisode || show.episodeCount || '';
   if (source !== 'library') return latest ? `Episodes ${latest}` : 'Episodes ?';
   const watched = show.lastWatched || highestWatchedEpisode(show) || '0';
   return latest ? `Progress ${watched} / ${latest}` : `Progress ${watched}`;
+}
+
+function infoPills(show) {
+  return show.score ? [`Score ${show.score}`] : [];
 }
 
 function modeSelector(show) {
@@ -90,7 +96,8 @@ export function showCard(show, source) {
     ? `${show.archived
       ? '<button class="secondary" data-action="unarchive">Unarchive</button>'
       : '<button class="secondary" data-action="archive">Archive</button>'
-    }<button class="danger" data-action="remove">Remove</button>`
+    }<button class="danger" data-action="remove">Remove</button>${show.providerMigrationStatus && show.providerMigrationStatus !== 'migrated'
+      ? '<button class="secondary" data-action="match-hianime">Match HiAnime</button>' : ''}`
     : isTracked
       ? '<button class="tracked" data-action="tracked" disabled>Tracked</button>'
       : '<button class="secondary" data-action="track">Track</button>';
@@ -106,10 +113,13 @@ export function showCard(show, source) {
           ${modeSelector(show)}
           ${show.archived ? '<span class="pill">Archived</span>' : ''}
           ${downloadedCount ? `<span class="pill downloaded">↓ ${downloadedCount} saved</span>` : ''}
+          ${infoPills(show).map((pill) => `<span class="pill">${escapeHtml(pill)}</span>`).join('')}
           ${schedulePills.map((pill, index) => `<span class="pill schedule${isUpcoming && index === 0 ? ' upcoming' : ''}">${escapeHtml(pill)}</span>`).join('')}
           ${nextSeasonPill(show)}
           ${show.recommendationReason ? `<span class="pill reason">${escapeHtml(show.recommendationReason)}</span>` : ''}
           ${show.refreshError ? `<span class="pill danger">Refresh failed</span>` : ''}
+          ${source === 'library' && show.providerMigrationStatus && show.providerMigrationStatus !== 'migrated'
+            ? `<span class="pill${show.providerMigrationStatus === 'error' ? ' danger' : ''}" title="${escapeHtml(show.providerMigrationReason || '')}">HiAnime: ${show.providerMigrationStatus === 'error' ? 'error' : 'manual match needed'}</span>` : ''}
         </div>
       </div>
       <div class="card-actions ${source === 'library' ? 'four' : 'three'}">
@@ -157,6 +167,7 @@ function relationLabel(relation) {
     side_story: 'Side story',
     alternative: 'Alternative',
     other: 'Related',
+    related: 'Related',
   }[String(relation || '').toLowerCase()] || 'Related';
 }
 

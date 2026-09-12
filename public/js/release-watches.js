@@ -85,7 +85,7 @@ export async function watchRelease(query) {
 }
 
 export async function checkReleaseWatches({ silent = false } = {}) {
-  const data = await api('/api/release-watches/check', { method: 'POST' });
+  const data = await api('/api/release-watches/check', { method: 'POST', background: silent });
   state.releaseWatches = data.watches || [];
   if (!silent && (data.found || []).length) state.releaseWatchesOpen = true;
   renderReleaseWatches();

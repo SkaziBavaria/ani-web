@@ -109,4 +109,36 @@ test('releasePills labels finished, ongoing, cancelled, and announced clearly', 
     status: 'Hiatus',
     airedStart: { year: 2020, month: 0, date: 1 },
   }), [`Hiatus ${dot} since 2020`]);
+  assert.deepEqual(releasePills({
+    status: 'Currently Airing',
+    airedStart: { year: 2026, month: 6, date: 25 },
+  }), ['Ongoing since 2026']);
+  assert.deepEqual(releasePills({
+    status: 'Finished Airing',
+    airedStart: { year: 2013, month: 3, date: 9 },
+    airedEnd: { year: 2014, month: 8, date: 14 },
+  }), [`2013${dash}2014 ${dot} Finished`]);
+});
+
+test('compareNewestActivity keeps the latest activity at the front', async () => {
+  const { compareNewestActivity } = await loadUtil();
+  const none = () => [];
+  const items = [
+    { name: 'Old', updatedAt: '2024-01-01T00:00:00.000Z' },
+    { name: 'Newest', lastActivityAt: '2026-09-12 18:00:00' },
+    { name: 'Mid', lastActivityAt: '2025-06-01T00:00:00.000Z' },
+    { name: 'Missing' },
+  ];
+  assert.deepEqual(
+    [...items].sort((a, b) => compareNewestActivity(a, b, none)).map((item) => item.name),
+    ['Newest', 'Mid', 'Old', 'Missing'],
+  );
+});
+
+test('compareNewestActivity prefers watch activity over a later metadata refresh', async () => {
+  const { compareNewestActivity } = await loadUtil();
+  const refreshed = { name: 'Refreshed', updatedAt: '2026-09-12T20:00:00.000Z', lastActivityAt: '2026-01-01T00:00:00.000Z' };
+  const watched = { name: 'Watched', updatedAt: '2026-01-02T00:00:00.000Z', lastActivityAt: '2026-09-12T21:00:00.000Z' };
+  const sorted = [refreshed, watched].sort((a, b) => compareNewestActivity(a, b, () => []));
+  assert.equal(sorted[0].name, 'Watched');
 });

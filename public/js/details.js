@@ -1,6 +1,7 @@
 import { api, toast, withBusy } from './api.js';
 import { els } from './dom.js';
-import { trackShow, removeShow } from './library.js';
+import { trackShow, removeShow, renderLibrary } from './library.js';
+import { refreshSearchResults } from './discover.js';
 import { state } from './state.js';
 import { relatedSeasonSection } from './shows.js';
 import { cacheStatusLabel, escapeHtml, showInitials, stripDescription, thumbnailUrl } from './util.js';
@@ -33,13 +34,21 @@ export async function openDetails(show) {
   if (!els.detailsDialog.open) els.detailsDialog.showModal();
 
   const mode = show.mode || state.settings.mode;
-  const data = await api(`/api/shows/${encodeURIComponent(show.id)}/details?mode=${encodeURIComponent(mode)}`);
+  const data = await api(`/api/shows/${encodeURIComponent(show.id)}/details?mode=${encodeURIComponent(mode)}&provider=${encodeURIComponent(show.provider || '')}`);
   const item = { ...show, ...(data.show || {}) };
   state.activeDetailsShow = item;
   state.detailsRelations = item.relations || [];
+  const apply = (list) => {
+    const index = list.findIndex((entry) => entry.id === item.id);
+    if (index >= 0) list[index] = { ...list[index], ...item };
+  };
+  apply(state.library);
+  apply(state.searchResults);
+  renderLibrary();
+  refreshSearchResults();
   const thumb = thumbnailUrl(item);
   const description = stripDescription(item.description) || 'No description available.';
-  const meta = [item.type, item.status, item.score ? `Score ${item.score}` : '', cacheStatusLabel(data)]
+  const meta = [item.type, item.rating, item.sourceQuality, item.status, item.score ? `Score ${item.score}` : '', cacheStatusLabel(data)]
     .filter(Boolean)
     .join(' · ');
   els.detailsTitle.textContent = item.name || item.title || 'About';
